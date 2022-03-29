@@ -235,3 +235,199 @@ public @interface SpringBootApplication {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## 의존 관계 주입 방법
+
+* 생성자 주입
+* 수정자 주입(Setter)
+* 필드 주입
+* 일반 메서드 주입
+
+> 생성자 주입
+* 1번만 호출되기 때문에, final, 불변한 필수 의존관계에 사용된다.
+>> final 변수의 경우 class 내부에서 꼭 사용되어야 하기 때문에 final 변수는 setting 해달라고 선언하는 것이다.
+* (setter가 없어야 함)
+
+```java
+
+ private final MemberRepository memberRepository;
+    private final DiscountPolicy discountPolicy;
+
+    @Autowired
+    public OrderServiceImpl(MemberRepository memberRepository, DiscountPolicy discountPolicy) {
+        this.memberRepository = memberRepository;
+        this.discountPolicy = discountPolicy;
+    }
+    
+```
+
+* 생성자가 1개만 있다면 @Autowired 생략해도 의존관계가 주입된다.
+
+> 수정자 주입
+
+* 선택, 수정이 필요할 경우 사용한다. (final 사용 불가)
+* 변수 하나하나 선택적으로 의존관계를 주입하여 사용가능하다는 장점. @Autowired(required = false)로 필수값을 꺼줄 수 있다.
+
+```java
+
+    private MemberRepository memberRepository;
+    private DiscountPolicy discountPolicy;
+
+    @Autowired(required = false)
+    public void setMemberRepository(MemberRepository memberRepository) {
+        this.memberRepository = memberRepository
+    }
+
+    @Autowired
+    public void setDiscountPolicy(DiscountPolicy discountPolicy) {
+        this.discountPolicy = discountPolicy;
+    }
+
+```
+
+---
+### 스프링 빈 등록 과정은 2단계이다.
+1. 먼저 생성자에서 쭉 땡겨서 의존관계를 생성하고,
+2. 이후 setter 등에서 의존관계를 생성한다.
+---
+
+
+> 필드 주입
+
+* 지금은 권장되지 않는 안티패턴이다.
+* 외부에서 변경이 불가능해서 테스트가 불가능하다.(생성자는 가능하다.)
+* DI 컨테이너 없이 자바코드 테스트가 불가능하다.
+* 따라서, 테스트코드같이 다른 곳에서 참조가 되지 않는 것들에 사용하면 좋다.
+* 또는 @Configuration 파일들(스프링에서만 사용할 것이기 때문)
+
+
+```java
+    
+    @Autowired
+    private MemberRepository memberRepository;
+    
+    @Autowired
+    private DiscountPolicy discountPolicy;
+
+```
+
+
+> 일반 메서드 주입
+
+* 잘 사용하지는 않는다.
+* 그냥 생성자 주입, 수정자 주입으로 다 처리되기 때문에, 그냥 참고용으로 보자.
+
+```java
+
+@Autowired
+public void init(MemberRepository memberRepository, DiscountPolicy discountPolicy){
+            this.memberRepository = memberRepository;
+            this.discountPolicy = discountPolicy;
+        }
+
+```
+
+
+### 주입할 스프링 빈이 없어도 동작시키고 싶은 경우
+자동 주입 대상을 옵션으로 처리하는 방법 3가지
+
+
+> Options들
+>> Member는 Spring Bean에 등록되어있지 않다.
+
+#### 0. 기본 @Autowired(required = true)
+
+```java
+   @Autowired
+   public void setNoBean0(Member noBean1){
+   System.out.println("member = " + noBean1);
+   }
+```
+* NoSuchBeanDefinitionException이 터진다. (Member가 빈에 없으므로)   
+
+ 
+#### 1. @Autowired(required = false)
+
+```java
+//호출이 아예 안됨
+@Autowired(required = false)
+public void setNoBean1(Member noBean1){
+System.out.println("member = " + noBean1);
+}
+```
+* 자동 주입할 대상이 없으면 수정자 메서드 자체가 호출이 안된다.
+
+#### 2. `org.springframework.lang.@Nullable`
+
+```java
+//member = null 널값으로 들어감
+@Autowired
+public void setNoBean2(@Nullable Member noBean2) {
+System.out.println("member = " + noBean2);
+}
+```
+* 자동 주입할 대상이 없으면 null이 입력된다.
+
+ 
+#### 3. Optional<>
+
+```java
+ //member = Optional.empty 로 들어감
+@Autowired
+public void setNoBean3(Optional<Member> noBean3) {
+System.out.println("member = " + noBean3);
+}
+```
+*  자동 주입할 대상이 없으면 `Optional.empty`가 입력된다.
+
+
+### 왜 최근 스프링부트는 생성자 주입을 추천해주는가?
+
+* 처음 조립시에 의존 관계 주입이 되는데, 불변해야 한다. 수정하는 경우는 거의 없음.
+* 생성자 주입은 객체 생성시 1번 호출되어 불변하게 설계 가능하다.
+* 프레임워크 없이 순수 자바 test시에 `Setter 주입`을 택하면, new로 객체 생성시에(스프링 사용 x) 주입이 안된 상태로 만들어진다.
+* 변수에 `final` 값을 넣을 수 있다. (생성자에서만 주입 가능 & 무조건 초기 주입되게 선언) 
+-> 생성자에서 값이 설정되지 않는 오류를 컴파일시에 막을 수 있다.
+
+> 프레임 워크에 의존하지 않고 순수한 자바 언어의 특징을 잘 살리는 방법이다.
+> 기본적으로 생성자 주입 사용, 선택값은 수정자 주입 방식으로 동시에 사용하기도 한다.
+
+> Setter 주입  순수자바 테스트시
+
+```java
+@Test
+void createOrder(){
+   OrderServiceImpl orderService = new OrderServiceImpl();
+   orderService.createOrder(...);
+        }
+```
+* 나머지 의존관계 누락된 채로, java로 객체 생성했다.
+
+> 생성자 주입 순수자바 테스트시
+
+```java
+@Test
+void createOrder(){
+        OrderServiceImpl orderService = new OrderServiceImpl(new MemoryMemberRepossitory(), new FixDiscount());
+        orderService.createOrder(...);
+        }
+
+```
+* 수동으로 원하는 구현체를 주입해줄 수 있다.
