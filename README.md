@@ -431,3 +431,126 @@ void createOrder(){
 
 ```
 * 수동으로 원하는 구현체를 주입해줄 수 있다.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 다형성을 활용해 동일 타입 구현체 선택하여 사용하기
+
+> 상황 1. 할인 정책이 2가지가 있다. 하나는 무조건 1000원, 하나는 구매 금액 10퍼센트이다.
+> 개발자 A씨는 경우에 따라 선택적으로 다른 동작을 취하게 하고 싶다.
+
+1. @Autowired로 의존성 주입받아 할인 interface의 구현체들을 Map or List에 받는다. (Map에 받을것임)
+2. 자동으로 주입된 할인정책 Map에서 원하는 구현체들을 꺼내어 원하는 상황마다 바꿔가며 사용할 것이다.
+3. 물론 클라이언트는 interface만 의존하고, 어떤 정책을 사용할지는 외부에서 인자로 받는다.
+
+
+### 구현
+
+Service단에서 로직을 구현했다.
+
+```java
+
+    @Service
+     class DiscountService {
+        private final Map<String, DiscountPolicy> policyMap;
+        private final List<DiscountPolicy> policies;
+        
+        //1. Map과 List로 생성자에게 의존관계주입을 요청한 모습이다.
+        @Autowired
+        public DiscountService(Map<String, DiscountPolicy> policyMap, List<DiscountPolicy> policies) {
+            this.policyMap = policyMap;
+            this.policies = policies;
+            System.out.println("policyMap = " + policyMap + ", policies = " + policies);
+        }
+
+        //2. 외부에서 Bean 네임을 주입받아 경우에 따라서 다른 할인 전략을 사용할 수 있게 했다.
+        public int discount(Member userA, int price, String discountCode) {
+            DiscountPolicy discountPolicy = policyMap.get(discountCode);
+
+            return discountPolicy.discount(userA, price);
+        }
+    }
+
+```
+
+>> 생성자에 @Autowired로 의존관계를 주입 받는데, 위에서 같이 Map, List에 담으면 그대로 객체가 담긴다.
+
+>> 1. Map과 List에 담겨있는 모습 
+```cmd
+policyMap = {fixDiscountPolicy=hello.core.discount.FixDiscountPolicy@25243bc1, rateDiscountPolicy=hello.core.discount.RateDiscountPolicy@1e287667},
+        
+policies = [hello.core.discount.FixDiscountPolicy@25243bc1, hello.core.discount.RateDiscountPolicy@1e287667]
+```
+
+>> 2. 주입받은 Map으로 `discount` 메서드를 제작한다.
+
+```java
+       public int discount(Member userA, int price, String discountCode) {
+            DiscountPolicy discountPolicy = policyMap.get(discountCode);
+
+            return discountPolicy.discount(userA, price);
+        }
+```
+
+### 테스트코드
+
+```java
+
+ @Test
+    public void findAllBean() throws Exception {
+        AnnotationConfigApplicationContext ac = new AnnotationConfigApplicationContext(DiscountService.class, AutoAppConfig.class);
+
+        DiscountService discountService = ac.getBean(DiscountService.class);
+
+        Member userA = new Member(1L, "userA", Grade.VIP);
+        int discountPrice = discountService.discount(userA, 10000, "fixDiscountPolicy"); //DiscountPolicy의 구현체 bean Name 1
+
+        assertThat(discountService).isInstanceOf(DiscountService.class);
+        assertThat(discountPrice).isEqualTo(1000);
+
+        int discountPrice2 = discountService.discount(userA, 20000, "rateDiscountPolicy"); //DiscountPolicy의 구현체 bean Name 2
+
+        assertThat(discountPrice2).isEqualTo(2000);
+    }
+
+```
+
+
+### 개선점
+
+DiscountService는 오로지 `DiscountPolicy` 라는 interface에만 의존하여 `DIP` 원칙도 지켰고,
+자바의 다형성을 잘 사용하였다.
+
+Code 받는 부분을 Enum으로 객체화하여 사용하면 좋을 것 같고, 
+@Qualifier나 @Primary 등을 사용해 주입받는 것이 더 좋을지 어쩔지는 팀원들과 상의해봐야 할 문제인 것 같다.
