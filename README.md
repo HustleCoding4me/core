@@ -576,3 +576,402 @@ Code 받는 부분을 Enum으로 객체화하여 사용하면 좋을 것 같고,
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 빈 라이프 사이클 이용해서 의존관계 (외부 라이브러리의 빈 생성,파괴시에 동작과 구별해서)
+
+* 특정 빈을 Spring에 등록하고, 그 빈의 의존관계가 주입된 후(완전히 생성된 후) 무언가 작업을 하고,<br>
+삭제 전에 어떤 작업을 하고 싶을 때가 있다. 기본적으로 `@PostConstruct`, `@PreDestroy` 사용을 하면 된다.
+
+
+* 그러나 외부 라이브러리를 사용할 때도 있는데, 이럴 때는 내부 코드를 수정할 수 없으므로<br> 수동으로 @Bean 등록시에 특정 메서드의 이름을 생성후, 소멸전 메서드로 등록을 해줘야 한다.
+
+
+> 스프링 빈의 라이프 사이클
+
+기본적인 `@PostConstruct`, `@PreDestroy`의 동작 시점은 아래와 같다.
+
+>> 스프링 컨테이너 생성 -> 스프링 빈 생성 -> 의존관계 주입 -> `@PostConstruct` -> 사용로직 -> `@PreDestroy` -> 스프링 종료
+
+// 기본 어노테이션 사용법
+
+```java
+
+    @PostConstruct
+    public void init() throws Exception {
+        //의존 관계 주입이 끝나면 호출
+        System.out.println("NetworkClient.afterPropertiesSet");
+        connect();
+        call("초기화 연결 메세지");
+    }
+
+    @PreDestroy
+    public void close() throws Exception {
+        System.out.println("NetworkClient.destroy");
+        disconnect();
+    }
+
+```
+
+
+### 특정 라이브러리에서 생명주기에 맞춰 사용법(`@Bean(initMethod = "init",destroyMethod = "beforeDestroy")`)
+
+* 보통 외부 라이브러리를 사용하면, `@PostConstruct`, `PreDestroy` 시점에 호출해줘야 할 경우가 생긴다.
+* 그럴 때 외부 라이브러리를 @Configuration 파일의 @Bean으로 등록하면서, 특정 메서드를 호출해달라고 이름으로 설정해줄 수 있다.
+
+> 사용법
+
+```java
+@Configuration
+    static class LifeCycleConfig {
+       ************************************************************
+        @Bean(initMethod = "init",destroyMethod = "beforeDestroy")
+        ************************************************************
+        public NetworkClient networkClient() {
+            NetworkClient networkClient = new NetworkClient();
+            networkClient.setUrl("http://hello-spring.dev");
+            return networkClient;
+        }
+    }
+```
+
+* 외부 라이브러리의 사용법에 맞춰 메서드명만 맞춰주면 된다.
+
+> 💥 Bean의 `destroyMethod`는 추론이라는 기능이 내장되어 있는데, `close`,`shutdown` 이름의 메서드를 자동으로 추적하여 종료 직전에 호출해준다.
+> 설정하지 않아도 작동된다고 놀라지 말자!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 빈 스코프 (빈 생존 범위)
+
+싱글톤은 너무나 알기 쉽기 때문에 생략하고, 특정 경우에 사용할 다른 종류를 알아보자.
+
+
+> 프로토타입
+>> 빈 생성 요청마다 `DI컨테이너`가 계속해서 새로운 인스턴스를 생성해주는 것. ( = 클라이언트가 요청마다 새로운 인스턴스 생성)
+
+* 💥`DI 컨테이너`는 빈 인스턴스 생성, 의존관계 주입과 초기화 단계까지만 처리한다. 이후 스프링은 어떻게 처리하던 클라이언트에게 위임.(관리 안한다는 뜻)
+* -> 따라서 `@PreDestroy` 호출 안됨. 클라이언트가 수동으로 종료해줘야 한다.
+
+```java
+@Test
+    void prototypeBeanFind() {
+        AnnotationConfigApplicationContext ac = new AnnotationConfigApplicationContext(PrototypeBean.class);
+        System.out.println("find prototypeBean1");
+        PrototypeBean bean = ac.getBean(PrototypeBean.class);
+        System.out.println("find prototypeBean2");
+        PrototypeBean bean2 = ac.getBean(PrototypeBean.class);
+
+
+        Assertions.assertThat(bean).isNotSameAs(bean2);
+        //같지 않다.
+        
+        //사용자가 수동으로 파괴해줘야 한다.
+        bean.destroy();
+        bean2.destroy();
+      
+        
+    }
+
+    @Scope("prototype")
+    static class PrototypeBean {
+        @PostConstruct
+        public void init() {
+            System.out.println("PrototypeBean.init");
+        }
+        @PreDestroy
+        public void destroy() {
+            System.out.println("PrototypeBean.destroy");
+        }
+    }
+
+```
+
+
+### 💥 주의사항
+* 만약 Singleton 내부에 의존관계 주입된 Prototype빈이 있을 경우, Client가 Singleton 내부 변수인 Prototype 변수를 호출하여 무언가 작업 할 때,
+* 내부변수 Prototype이 매번 요청마다 새로운 인스턴스가 생성되는게 아니다. Singleton 클래스의 Prototype 내부 변수에 에 참조 주소값이 이미 생성되어 저장되어있기 때문에,
+* 계속해서 같은 Prototype 인스턴스가 불려와 작동하기 때문에, Prototype 의미가 없어진다. (매번 새로운 인스턴스가 생성되어 작동하는게 아니므로)
+
+-> 결론, 싱글톤 빈 내부에 주입된 Prototype 빈은 매번 새로 생성되는 것이 아니라 유지된다. 우리가 Prototype을 사용한 이유는 매번 새로운 인스턴스를 가지고 싶어서일 것이다.
+But, 다른 싱글톤 클래스를 호출할 때, 내부에 같은 Prototype이 있어도 이때는 두 Prototype이 새로 생성되긴 한다.(우리 의도는 아닐듯, Prototype은 주로 무조건 쌔거만 쓰고싶어서 사용한다.)
+
+
+### 그렇다면, Singleton 빈 내부에 PrototypeBean을 사용하는 방법은?
+-> `Provider`를 사용하면 된다.
+
+Dipendency Injection(DI) <-> Dipendency Lookup(DL) 이다. 우리는 Singleton 내부의 Prototype을 DL하여 생성하면 된다.
+
+
+```java
+
+@Scope("singleton")
+static class ClientBean{//Singleton 하위에 Prototype 빈
+******************************************
+    @Autowired
+private ObjectProvider<PrototypeBean> prototypeBeanProvider;
+******************************************
+    
+    public int logic() {
+    ******************************************
+        PrototypeBean prototypeBean = prototypeBeanProvider.getObject();
+    ******************************************
+    }
+}
+```
+
+* `private ObjectProvider<PrototypeBean> prototypeBeanProvider` 으로 속성 맞춰 Prototype으로 Provider 생성한다.
+* 그것으로 새로 Prototype을 필요할 때마다 생성할 위치에 getObject() 사용한다.
+* Provider는 getObject() 사용할 때, 그 때 마다 PrototypeBean을 찾아 제공해준다.
+
+-> 결론, ObjectProvider는 매번 DI 컨테이너에게 새로 요청해주는 기능을 사용하므로, Prototype이 매번 새로 생성된다.
+기존 새로 Singleton에서 가져다 쓰면 생성을 하지 않는 문제를 해결할 수 있다.(최초 1회 생성하여 멤버변수에 저장해서 Prototype이 재생성되지 않는 문제 해결)
+
+
+
+
+# 웹 스코프
+
+Prototype과 다르게 종료시점까지 관리해서 종료 메서드가 사용가능하다.
+
+### 종류
+* request : HTTP Request 하나마다 별도의 인스턴스가 생성, 관리 (유저 A, 유저 B가 각각 다른 Bean 생성, 사용)
+* session : HTTP Session과 동일한 생명주기를 가진 스코프
+* application : 서블릿 컨텍스트와 동일한 생명주기
+* websocket : 웹 소켓과 동일한 생명주기를 가지는 스코프
+
+request를 대표로 설명
+-> User A, User B로 나눴을 때, 하위 모든 bean들도 각각 제작되어 사용된다. 
+-> 요청 끝나면 함께 파기
+
+---
+### 활용 
+
+> 동시에 여러 HTTP 요청이 올 때, 어떤 요청이 남긴 로근지 확인하는데 사용
+
+로그 형식 : [UUID][requestURL]{message}
+
+로그 객체를 @PostConstruct에서 UUID를 세팅해주고 requestURL을 Set 해준다.
+이 객체는 모든 Client가 독립적으로 인스턴스를 가지고 사용, 소멸해야 하기 때문에 싱글톤이 아니다.
+
+Http 요청의 생성과 연결이 끝나면 종료하기 때문에 @Scope(value="request")로 사용한다.
+한번 요청이 들어와서 한 Contoller -> Service 동작에서 한번 생성된 애들은 동일한 빈이 유지가 된다.
+-> (한 요청에 무슨 동작 했는지 구분이 다 된다는 뜻, prototype과 별개인 기능이다.)
+
+
+
+> 로그 찍어주는 객체를 `@Scope("request") 범위로 선언한 모습`
+> MyLogger 생성시 init으로 UUID 자동 할당, 이후 URL은 수동 할당, 파괴될 때도 죽는다고 로그 찍고 죽는다. (빈 라이프사이클에 의해)
+
+```java
+
+@Component
+@Scope(value="request")
+public class MyLogger {
+
+    private String uuid;
+    private String requestURL;
+
+    public void setRequestURL(String requestURL) {
+        this.requestURL = requestURL;
+    }
+
+    public void log(String message) {
+        System.out.println("[" + uuid + "]" + "[" + requestURL + "]" + message);
+    }
+
+    @PostConstruct
+    public void init() {
+        uuid = UUID.randomUUID().toString();
+        System.out.println("[" + uuid + "] request scope bean create:" +  this);
+    }
+
+    @PreDestroy
+    public void close() {
+        System.out.println("[" + uuid + "] request scope bean close:" +  this);
+    }
+    
+}
+```
+
+> Controller에 사용자 request가 들어오면 해당 URL찍고, 동일 UUID로 request가 소멸될 때 까지 같은 MyLogger 객체가 유지되어 맘껏 사용하다가 소멸한다. 
+
+* ObjectProvider는 말그대로 MyLogger 빈 컨테이너에 접근해 달라는 요청인데 MyLogger 스코프가 request기 때문에
+* 매번 request스코프의 MyLogger를 생성해 준다. (Singleton이면 동일한놈 계속 줌)
+
+```java
+
+@Controller
+@RequiredArgsConstructor
+public class LogDemoController {
+
+    private final LogDemoService logDemoService;
+    //ObjectProvider는 말그대로 MyLogger 빈 컨테이너에 접근해 달라는 요청인데 MyLogger 스코프가 request기 때문에
+    //매번 request스코프의 MyLogger를 생성해 준다. (Singleton이면 동일한놈 계속 줌)
+    ******************************************************************
+    //1.ObjectProvider 선언 (MyLogger를 컨테이너에 요청해주는 제공자)
+    private final ObjectProvider<MyLogger> myLoggerProvider;
+    ******************************************************************
+    @RequestMapping("log-demo")
+    @ResponseBody
+    public String logDemo(HttpServletRequest request) {
+        String requestURL = request.getRequestURL().toString();
+        ******************************************************************
+        //2. 컨테이너에 요청한 모습. 스코프에 맞춰서 규칙에 맞게 반환해준다.(해당 Mylogger는 `@Scope("request")이므로, 매번 새 인스턴스 생성, 한 request단위까지는 동일하게 유지해줌
+        MyLogger mylogger = myLoggerProvider.getObject();
+        ******************************************************************
+        myLogger.setRequestURL(requestURL);
+
+        //이후 Service, Controller, Repository 아무대서나 휘뚜루 마뚜루 맘대로 로그 찍기
+        mylogger.log("controller이다~");
+        logDemoService.log("서비스 로그~");
+        //한 request에서는 동일한 mylogger 빈이 유지가 된다는 사실!
+        //따라서 클라이언트별로 UUID로 구분이 가능하다.
+    }
+}
+
+
+@Service
+@RequiredArgsConstructor
+public class LogDemoService{
+    
+    private final ObjectProvider<MyLogger> myLoggerProvider;
+    
+    
+    public void logic(String id){
+        ******************************************************************
+        //3. 컨트롤러에서 서비스 로직을 호출하고, 서비스에서 Provider로 또 MyLogger 호출.
+        //But, 같은 request이므로 같은 MyLogger 객체가 반환된다.(UUID가 동일하게 유지된다는 뜻, 사용자 구별 가능하다는 뜻)
+        MyLogger mylogger = myLoggerProvider.getObject();
+        ******************************************************************
+        mylogger.log("service 블라블라~~");
+    }
+    
+}
+
+```
+
+
+#### Provider에 의존하지 말고 프록시 선언하여 다형성까지 잡아보자
+
+ObjectProvider에 의존하지 않고, 가상의 Proxy객체를 넣어 클라이언트 코드에서 그냥 MyLogger만 호출하여 사용해보자.(모든 AOP의 근간이 되는 기술)
+
+* 기존 `requestScope`를 달아놓은 객체에 추가로 `proxyMode`를 단다.
+
+```java
+
+```java
+
+@Component
+
+****************************************************************
+//Scope에 프록시Mode 선언
+@Scope(value="request", proxyMode = ScopedProxyMode.TARGET_CLASS)//Interface면 TARGET_INTERFACE 선택
+****************************************************************
+
+public class MyLogger {
+
+    private String uuid;
+    private String requestURL;
+
+    public void setRequestURL(String requestURL) {
+        this.requestURL = requestURL;
+    }
+
+    public void log(String message) {
+        System.out.println("[" + uuid + "]" + "[" + requestURL + "]" + message);
+    }
+
+    @PostConstruct
+    public void init() {
+        uuid = UUID.randomUUID().toString();
+        System.out.println("[" + uuid + "] request scope bean create:" +  this);
+    }
+
+    @PreDestroy
+    public void close() {
+        System.out.println("[" + uuid + "] request scope bean close:" +  this);
+    }
+    
+}
+```
+
+
+```java
+
+@Controller
+@RequiredArgsConstructor
+public class LogDemoController {
+    
+    ******************************************************************
+    //private final ObjectProvider<MyLogger> myLoggerProvider;
+    변경
+    private final MyLogger mylogger;
+    ******************************************************************
+    @RequestMapping("log-demo")
+    @ResponseBody
+    public String logDemo(HttpServletRequest request) {
+        ******************************************************************
+        //2. 컨테이너에 요청한 모습. 스코프에 맞춰서 규칙에 맞게 반환해준다.(해당 Mylogger는 `@Scope("request")이므로, 매번 새 인스턴스 생성, 한 request단위까지는 동일하게 유지해줌
+        MyLogger mylogger = myLoggerProvider.getObject();
+        ******************************************************************
+
+    }
+}
+
+
+@Service
+@RequiredArgsConstructor
+public class LogDemoService{
+    
+    private final ObjectProvider<MyLogger> myLoggerProvider;
+    
+    
+    public void logic(String id){
+        ******************************************************************
+        //MyLogger mylogger = myLoggerProvider.getObject();
+        변경
+        private final MyLogger mylogger;
+        ******************************************************************
+        mylogger.log("service 블라블라~~");
+    }
+    
+}
+
+```
+
+### Proxy 객체 레이지로딩의 장점
+
+* ProxyMode를 추가하여 Provider에게 주입받지 않고,
+* Spring에서 `CGLIB` 바이트코드 조작으로 만든 가짜 MyLogger 프록시 객체를 Provider처럼 등록하게 스프링 컨테이너 빈에 적재한다.
+* 이 프록시객체는 싱글톤이고, 레이지 로딩으로 실 동작을 수행할 때, Proxy객체가 해당 객체를 찾아 기능을 작동시켜준다. (스코프에 맞춰서)
+
+myLogger.logic() 호출 -> Spring CGLIB Proxy객체 MyLogger 호출 -> Proxy객체가 원본 클래스의 logic() 호출해준다.
+
+-> 💥 진짜 객체 조회를 기다렸다가 실 동작시에 가져와 작동하는 LAZYLOADING하여 처리하기 때문에, 가능한 일이다.
+어차피 가짜 객체를 등록하고 request단위로 요청시에 호출해주기 때문에, 모든 코드에 그냥 선언하여 주입하듯이 요청하면 된다.  (다형성 사용)
+이 프록시 객체는 원본 객체를 상속하고 있기 때문. (Interface, 역할 기능을 해준다고 생각하면 됨)
+결론적으로 클라이언트 코드를 고치지 않아도 된다.
